@@ -1,21 +1,30 @@
 from fastapi import FastAPI
-from app.database import engine, Base
-from app.api import Orders, chat
-from dotenv import load_dotenv
+from contextlib import asynccontextmanager
+from app.database import engine, Base, get_db
+from app.api import chat, orders
+from app.services.rag_service import load_restaurant_data
 
-load_dotenv()
 
-Base.metadata.create_all(bind=engine)
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Runs once on startup
+    Base.metadata.create_all(bind=engine)
+
+    # Load restaurant data into pgvector if not already loaded
+    db = next(get_db())
+    try:
+        load_restaurant_data(db)
+    finally:
+        db.close()
+
+    yield
+    # anything after yield runs on shutdown — nothing needed here
+
 
 app = FastAPI(
-    title="Restaurant Ai Agent",
-    description="AI-powered Restaurant customer service agent",
-    version="1.0.0"
+    title="Restaurant Agent API",
+    lifespan=lifespan
 )
 
-app.include_router(Orders.router, prefix="/api/orders", tags=["Orders"])
-app.include_router(chat.router, prefix="/api/chat", tags=["Chat"])
-
-@app.get("/health")
-def health():
-    return {"status": "ok"}
+app.include_router(chat.router, prefix="/api")
+app.include_router(orders.router, prefix="/api")

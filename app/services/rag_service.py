@@ -1,5 +1,5 @@
-from app.models import KnowledgeChunk
-from embedding_service import get_embedding
+from app.models.KnowledgeChunk import KnowledgeChunk
+from app.services.embedding_service import get_embedding
 from sqlalchemy.orm import Session
 from sqlalchemy import text
 
@@ -13,7 +13,7 @@ def split_text(text: str, chunk_size: int = 1000, overlap: int = 200) -> list[st
     return chunks
 
 
-async def load_restaurant_data(db:Session):
+def load_restaurant_data(db:Session):
 
     existing = db.execute(text("SELECT COUNT(*) FROM knowledge_chunks")).scalar()
     if existing > 0:
@@ -33,10 +33,10 @@ async def load_restaurant_data(db:Session):
     db.commit()
 
 
-async def search_knowledge_base(question: str, db: Session) -> str:
+def search_knowledge_base(question: str, db: Session) -> str:
     question_embedding = get_embedding(question)
     results = db.execute(
-        text("SELECT content FROM document_chunks ORDER BY embedding <=> CAST(:embedding AS vector) LIMIT 5"),
+        text("SELECT content FROM knowledge_chunks ORDER BY embedding <=> CAST(:embedding AS vector) LIMIT 5"),
         { "embedding": str(question_embedding)}
     ).fetchall()
 
