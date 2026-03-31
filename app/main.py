@@ -3,7 +3,9 @@ from contextlib import asynccontextmanager
 from app.database import engine, Base, get_db
 from app.api import chat, orders
 from app.services.rag_service import load_restaurant_data
+from dotenv import load_dotenv
 
+load_dotenv()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
