@@ -70,9 +70,32 @@ def make_tools(db: Session):
         except json.JSONDecodeError:
             return "Sorry, I couldn't parse the order items. Please ask the customer to clarify what they want."
 
-        # Calculate total price — placeholder, extend later with real prices from DB
-        total_price = 0.0
+        price_context = search_knowledge_base("menu prices", db)
 
+        price_response = client.chat.completions.create(
+            model="deepseek-chat",
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        "You are a price calculator. Given a list of ordered items and a price list, "
+                        "calculate the total price. Return ONLY a number with no currency symbol, "
+                        "no explanation, no markdown. Example: 15.000"
+                    )
+                },
+                {
+                    "role": "user",
+                    "content": f"Items: {json.dumps(parsed_items)}\n\nPrice list:\n{price_context}"
+                }
+            ],
+            temperature=0
+        )
+        
+        try:
+            total_price = float(price_response.choices[0].message.content.strip())
+        except ValueError:
+            total_price = 0.0
+        
         order = Order(
             customer_name=customer_name,
             customer_phone=customer_phone,
