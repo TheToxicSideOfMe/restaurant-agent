@@ -3,24 +3,31 @@ from contextlib import asynccontextmanager
 from app.database import engine, Base, get_db
 from app.api import chat, orders
 from app.services.rag_service import load_restaurant_data
-from dotenv import load_dotenv
+from app.api.telegram import build_telegram_app
 
-load_dotenv()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Runs once on startup
+    # Create tables + seed knowledge base
     Base.metadata.create_all(bind=engine)
-
-    # Load restaurant data into pgvector if not already loaded
     db = next(get_db())
     try:
         load_restaurant_data(db)
     finally:
         db.close()
 
+    # Start Telegram bot polling in the background
+    telegram_app = build_telegram_app()
+    await telegram_app.initialize()
+    await telegram_app.start()
+    await telegram_app.updater.start_polling()
+
     yield
-    # anything after yield runs on shutdown — nothing needed here
+
+    # Graceful shutdown
+    await telegram_app.updater.stop()
+    await telegram_app.stop()
+    await telegram_app.shutdown()
 
 
 app = FastAPI(
