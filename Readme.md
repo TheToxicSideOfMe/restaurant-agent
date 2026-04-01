@@ -14,6 +14,7 @@ Built with **FastAPI**, **LangGraph**, **Deepseek**, and **pgvector**.
 - 🧠 **Structured item parsing** — plain language like "2x burger and a coke" gets parsed into clean JSON before hitting the DB
 - 💰 **Automatic price calculation** — total price computed from the knowledge base at order time
 - 📦 **Orders dashboard** — REST endpoint for the restaurant owner to view all incoming orders
+- 📱 **Telegram bot** — customers chat directly via Telegram, no app or browser needed
 - 🐳 **Fully Dockerized** — one command to run everything
 
 ---
@@ -28,19 +29,19 @@ Built with **FastAPI**, **LangGraph**, **Deepseek**, and **pgvector**.
 | Embeddings | Ollama `nomic-embed-text` (local) |
 | Vector DB | PostgreSQL + pgvector |
 | ORM | SQLAlchemy |
-| Messaging | Twilio WhatsApp *(coming soon)* |
+| Messaging | Telegram Bot API |
 
 ---
 
 ## Architecture
 
 ```
-Customer message (HTTP or WhatsApp)
+Customer message (Telegram or HTTP)
          │
          ▼
-   POST /api/chat
+   Telegram Bot / POST /api/chat
          │
-         ├── Load conversation history from DB
+         ├── Load conversation history from DB (keyed by chat_id or session_id)
          │
          ▼
    LangGraph Agent Loop
@@ -75,7 +76,7 @@ Customer message (HTTP or WhatsApp)
 ```
 restaurant-agent/
 ├── app/
-│   ├── main.py                        # FastAPI app, lifespan startup
+│   ├── main.py                        # FastAPI app, lifespan startup, Telegram polling
 │   ├── database.py                    # SQLAlchemy engine, session, pgvector setup
 │   ├── models/
 │   │   ├── order.py                   # Order table
@@ -83,7 +84,8 @@ restaurant-agent/
 │   │   └── knowledge_chunk.py        # pgvector embeddings table
 │   ├── api/
 │   │   ├── chat.py                    # POST /api/chat
-│   │   └── orders.py                  # GET /api/orders
+│   │   ├── orders.py                  # GET /api/orders
+│   │   └── telegram.py               # Telegram bot handler
 │   ├── agent/
 │   │   ├── graph.py                   # LangGraph agent graph
 │   │   └── tools.py                   # search_menu + place_order tools
@@ -107,6 +109,7 @@ restaurant-agent/
 - [Docker](https://docs.docker.com/get-docker/) + Docker Compose
 - [Ollama](https://ollama.com/download) running locally with `nomic-embed-text` pulled
 - A [Deepseek API key](https://platform.deepseek.com/)
+- A Telegram bot token from [@BotFather](https://t.me/BotFather)
 
 Pull the embedding model if you haven't already:
 
@@ -114,7 +117,13 @@ Pull the embedding model if you haven't already:
 ollama pull nomic-embed-text
 ```
 
-### 1. Configure environment
+### 1. Create a Telegram Bot
+
+1. Open Telegram and search for `@BotFather`
+2. Send `/newbot` and follow the prompts
+3. Copy the API token BotFather gives you — it's free and instant
+
+### 2. Configure environment
 
 Copy the example and fill in your values:
 
@@ -131,9 +140,11 @@ OLLAMA_BASE_URL=http://host.docker.internal:11434
 EMBEDDING_MODEL=nomic-embed-text
 
 DATABASE_URL=postgresql://postgres:postgres@db:5432/restaurant_db
+
+TELEGRAM_BOT_TOKEN=your_telegram_token_here
 ```
 
-### 2. Configure Ollama to accept external connections (Linux only)
+### 3. Configure Ollama to accept external connections (Linux only)
 
 By default, Ollama on Linux only listens on `127.0.0.1`. Docker containers can't reach it without this change:
 
@@ -156,7 +167,7 @@ sudo systemctl restart ollama
 
 > **Mac/Windows**: skip this step — Docker Desktop handles it automatically.
 
-### 3. Run
+### 4. Run
 
 ```bash
 docker compose up --build
@@ -165,8 +176,9 @@ docker compose up --build
 On first startup the app will:
 1. Create all database tables
 2. Chunk and embed `restaurant_info.txt` into pgvector (skipped on subsequent runs)
+3. Start the Telegram bot polling in the background
 
-Then open **http://localhost:8000/docs** to access the Swagger UI.
+Open **http://localhost:8000/docs** to test via Swagger, or message your bot directly on Telegram.
 
 ---
 
@@ -174,7 +186,7 @@ Then open **http://localhost:8000/docs** to access the Swagger UI.
 
 ### `POST /api/chat`
 
-Send a message to the agent.
+Send a message to the agent programmatically.
 
 ```json
 {
@@ -190,7 +202,7 @@ Send a message to the agent.
 }
 ```
 
-`session_id` identifies the conversation. Use any unique string — a UUID for Swagger testing, or a phone number for WhatsApp integration.
+`session_id` identifies the conversation. Use any unique string for Swagger testing. The Telegram bot uses each user's `chat_id` automatically.
 
 ---
 
@@ -218,11 +230,21 @@ Returns all orders for the restaurant owner, sorted newest first.
 
 ---
 
-## Customizing the Restaurant
+## Telegram Bot
 
-Edit `app/data/restaurant_info.txt` to match your restaurant — menu items, prices, opening hours, delivery zones, and payment methods. On next startup the knowledge base will be re-embedded automatically if the table is empty.
+The Telegram bot runs automatically when the server starts — no separate process needed. Each user's Telegram `chat_id` is used as their `session_id`, so conversation memory is persistent per user across multiple messages.
 
-Example format:
+The bot shares the exact same agent, RAG pipeline, and order logic as the HTTP API — zero duplicate code.
+
+To test: find your bot on Telegram by the username you chose in BotFather and send it a message.
+
+---
+
+## Customizing for Your Business
+
+Two files control the entire behavior of the agent:
+
+**1. `app/data/restaurant_info.txt`** — the knowledge base. Replace this with your restaurant's actual menu, prices, hours, delivery zones, and payment methods. The agent answers all customer questions from this file.
 
 ```
 Menu & Prices:
@@ -239,6 +261,10 @@ Delivery Zones:
 - Minimum order: 15 TND
 - Delivery fee: 3 TND
 ```
+
+**2. `SYSTEM_PROMPT` in `app/agent/graph.py`** — controls the agent's personality, language, and behavior rules. Change this to match your brand tone or switch the response language entirely.
+
+After editing `restaurant_info.txt`, clear the `knowledge_chunks` table and restart — the data will be re-embedded automatically.
 
 ---
 
@@ -261,7 +287,8 @@ uvicorn app.main:app --reload
 - [x] Conversational order placement
 - [x] Structured item parsing
 - [x] Automatic price calculation
+- [x] Telegram bot integration
 - [x] Docker support
-- [ ] WhatsApp integration via Twilio
-- [ ] Order status updates
+- [ ] Order status updates sent to customer via Telegram
+- [ ] Admin dashboard UI
 - [ ] Multi-restaurant support
